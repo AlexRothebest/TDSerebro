@@ -324,7 +324,7 @@ class Parser():
 
 
 def write_to_excel():
-	global description_data, no_desc_articuls
+	global no_desc_articuls
 
 	products = Product.objects
 
@@ -442,7 +442,7 @@ def write_to_googlesheet():
 	pprint(data)
 
 	CREDENTIALS_FILE = 'creds.json'
-	spreadsheet_id = '1eMVic6fqq3oZ8Cs7C_Il2N0TbNZLj7HYQTUeZKs8iy0'
+	spreadsheet_id = '1on1a2c6gZ4-bTypYggpWbNZnewvmp8owkbiURpwnwJ0'
 
 	credentials = ServiceAccountCredentials.from_json_keyfile_name(
 		CREDENTIALS_FILE,
@@ -597,9 +597,6 @@ def parse_groups():
 
 		group_name = soup.select_one('b.selected_filter').text.strip()
 
-		if 'бижутерия' in group_name.lower():
-			return
-
 		links = {f"https://tdserebro.ru{a.get('href')}" : group_name\
 				 for a in soup.find_all('a', class_ = 'modal-trigger')}
 
@@ -672,10 +669,6 @@ def parse_groups():
 	return all_links
 
 
-# parse_groups()
-# a = 1 / 0
-
-
 def get_products_links():
 	def parse_page(url):
 		nonlocal all_links, page_flags
@@ -703,7 +696,7 @@ def get_products_links():
 
 
 	def parse_group(url):
-		nonlocal all_page_links, group_flags
+		nonlocal all_page_links, group_flags, group_identifiers_data
 
 		soup = bs(get_html(url), 'html.parser')
 
@@ -711,6 +704,11 @@ def get_products_links():
 			number_of_pages = int(soup.find('ul', class_ = 'pagination').find_all('li')[-1].a.text.strip())
 		except:
 			number_of_pages = 1
+
+		group_name = soup.select_one('b.selected_filter').text.strip()
+		group_identifier = url.split('/')[-1].split('?')[0]
+
+		group_identifiers_data[group_name.lower()] = group_identifier
 
 		print(f'{url}: {number_of_pages}')
 
@@ -721,6 +719,8 @@ def get_products_links():
 		group_flags[url] = True
 
 
+	group_identifiers_data = {}
+
 	url = 'https://tdserebro.ru/almaty'
 	soup = bs(get_html(url), 'html.parser')
 	col = soup.select('li.mega-menu-column')[1]
@@ -728,11 +728,14 @@ def get_products_links():
 	for li in col.select('li.has-children'):
 		if len(li.select('ul.cd-accordion-submenu')) == 0:
 			group_links.append(f"https://tdserebro.ru{li.label.a.get('href')}")
+		else:
+			group_identifiers_data[li.label.a.text.lower()] = li.label.a.get('href').split('/')[-1].split('?')[0]
 	print('Group links:\n' + '\n'.join(group_links) + '\n')
 
 	all_page_links = []
-	group_flags = {link: False for link in group_links}
+	group_flags = {}
 	for link in group_links:
+		group_flags[link] = False
 		thread = Thread(target = parse_group, args = (link,))
 		thread.start()
 		time.sleep(0.5)
@@ -740,11 +743,15 @@ def get_products_links():
 	while False in [group_flags[key] for key in group_flags]:
 		time.sleep(1)
 
+	with open('Group identifiers.json', 'w', encoding = 'UTF-8') as file:
+		file.write(json.dumps(group_identifiers_data, indent = 4))
+
 	print()
 
 	all_links = []
-	page_flags = {link: False for link in all_page_links}
+	page_flags = {}
 	for url in all_page_links:
+		page_flags[url] = False
 		thread = Thread(target = parse_page, args = (url,))
 		thread.start()
 		time.sleep(0.5)
@@ -773,92 +780,106 @@ def start_parser(list_of_links):
 	parser = Parser(list_of_links)
 
 
+def set_to_parse_on_true(event):
+	global to_parse
+
+	to_parse = True
+
+
 def create_interface():
-    global root
+    global root, to_parse
 
     root = Tk()
     root.title('TDSerebro parser')
-    root.minsize(260, 110)
+    root.minsize(260, 170)
+
+    save_button = Button(root, text = 'Начать парсинг', width = 25, height = 2)
+    save_button.bind('<Button-1>', set_to_parse_on_true)
+    save_button.place(x = 40, y = 30)
 
     save_button = Button(root, text = 'Занести уже собранные\nданные в файл', width = 25, height = 2)
     save_button.bind('<Button-1>', lambda event: create_thread(write_to_excel, ()))
-    save_button.place(x = 40, y = 30)
+    save_button.place(x = 40, y = 90)
 
     root.mainloop()
 
 
-write_to_googlesheet()
-exit()
+# write_to_googlesheet()
+# exit()
 
 
 create_thread(create_interface)
 
 
-with open('Description.json', 'r', encoding = 'UTF-8') as file:
-	description_data = json.loads(file.read())
-
-with open('Links with groups.json', 'r', encoding = 'UTF-8') as file:
-	groups_data = json.loads(file.read())
-
-
 templateLoader = jinja2.FileSystemLoader(searchpath = "./")
 templateEnv = jinja2.Environment(loader = templateLoader)
 
-
-with open('Perfect proxy list.txt', 'r', encoding = 'UTF-8') as file:
-    good_proxies = [{
-        'http': f'http://{proxy}',
-        'https': f'https://{proxy}'
-    } for proxy in file.read().split('\n')]
+to_parse = False
 
 
-# parse_thematics()
+while True:
+	if datetime.now().hour == 7 and datetime.now().minute == 0 or to_parse:
+		with open('Perfect proxy list.txt', 'r', encoding = 'UTF-8') as file:
+		    good_proxies = [{
+		        'http': f'http://{proxy}',
+		        'https': f'https://{proxy}'
+		    } for proxy in file.read().split('\n')]
 
-# products_links = get_products_links()
-products_links = get_products_links2()
 
-number_of_parsers = 100
-not_found_on_amoresilver_articuls = []
-number_of_products_viewed = 0
-number_of_products_endviewed = 0
+		parse_thematics()
+		parse_groups()
+		products_links = get_products_links()
+		# products_links = get_products_links2()
 
-list_of_lists_of_links = [[] for i in range(number_of_parsers)]
-products_links = products_links[3300 : 3800]
-# products_links = ['https://tdserebro.ru/almaty/product_modal/407208##!']
-for list_num, link in enumerate(products_links):
-	list_of_lists_of_links[list_num % number_of_parsers].append(link)
 
-for list_of_links in list_of_lists_of_links:
-	create_thread(start_parser, (list_of_links,))
-	# thread = Thread(target = start_parser, args = (list_of_links,))
-	# thread.start()
-	# time.sleep(0.1)
+		with open('Links with groups.json', 'r', encoding = 'UTF-8') as file:
+			groups_data = json.loads(file.read())
 
-time.sleep(3)
 
-start_time = datetime.now()
-l = len(products_links)
-while False in [parser.ready_status for parser in Parser.objects] and (datetime.now() - start_time).seconds < 3600:
-	print(len(Product.objects))
-	with open('Len.txt', 'w', encoding = 'UTF-8') as file:
-		# file.write(str(len(Product.objects)))
-		file.write(f'{len(Product.objects)}/{number_of_products_endviewed}/{number_of_products_viewed}/{l}')
+		number_of_parsers = 100
+		not_found_on_amoresilver_articuls = []
+		number_of_products_viewed = 0
+		number_of_products_endviewed = 0
 
-	time.sleep(10)
+		list_of_lists_of_links = [[] for i in range(number_of_parsers)]
+		products_links = products_links[3300 : 3800]
+		# products_links = ['https://tdserebro.ru/almaty/product_modal/407208##!']
+		for list_num, link in enumerate(products_links):
+			list_of_lists_of_links[list_num % number_of_parsers].append(link)
 
-print(Product.objects[0].price)
+		for list_of_links in list_of_lists_of_links:
+			create_thread(start_parser, (list_of_links,))
+			# thread = Thread(target = start_parser, args = (list_of_links,))
+			# thread.start()
+			# time.sleep(0.1)
 
-print(number_of_products_viewed)
+		time.sleep(3)
 
-no_desc_articuls = []
+		start_time = datetime.now()
+		l = len(products_links)
+		while False in [parser.ready_status for parser in Parser.objects] and (datetime.now() - start_time).seconds < 3600:
+			print(len(Product.objects))
+			with open('Len.txt', 'w', encoding = 'UTF-8') as file:
+				# file.write(str(len(Product.objects)))
+				file.write(f'{len(Product.objects)}/{number_of_products_endviewed}/{number_of_products_viewed}/{l}')
 
-write_to_excel()
+			time.sleep(10)
 
-write_to_googlesheet()
+		print(Product.objects[0].price)
 
-with open('Articuls without description.txt', 'w', encoding = 'UTF-8') as file:
-	file.write('\n'.join(no_desc_articuls))
+		print(number_of_products_viewed)
 
-print('Not found articuls on amoresilver.kz:\n' + '\n'.join(not_found_on_amoresilver_articuls))
+		no_desc_articuls = []
 
-exit()
+		write_to_excel()
+
+		write_to_googlesheet()
+
+		with open('Articuls without description.txt', 'w', encoding = 'UTF-8') as file:
+			file.write('\n'.join(no_desc_articuls))
+
+		print('Not found articuls on amoresilver.kz:\n' + '\n'.join(not_found_on_amoresilver_articuls))
+
+		to_parse = False
+	else:
+		time.sleep(10)
